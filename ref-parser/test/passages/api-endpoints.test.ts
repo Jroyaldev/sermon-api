@@ -131,7 +131,7 @@ describe("Passage API endpoints", () => {
     expect(body.html).toContain('<span class="match">John 1:1</span>');
   });
 
-  it("returns placeholder passage text", async () => {
+  it("returns passage text", async () => {
     const request = new Request("http://localhost/api/passages/text/John.3.16");
     (request as any).nextUrl = new URL("http://localhost/api/passages/text/John.3.16");
     const response = await textGET(request as any, {
@@ -141,7 +141,7 @@ describe("Passage API endpoints", () => {
 
     expect(status).toBe(200);
     expect(body.osis).toBe("John.3.16");
-    expect(body.verses[0]?.text).toContain("placeholder");
+    expect(body.verses[0]?.text).toContain("For God so loved the world");
   });
 
   it("rejects invalid parse payloads", async () => {

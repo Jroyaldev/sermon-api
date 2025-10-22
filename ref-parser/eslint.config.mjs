@@ -7,6 +7,9 @@ import tsParser from "@typescript-eslint/parser";
 export default [
   js.configs.recommended,
   {
+    ignores: ["**/.next/**"],
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       parser: tsParser,
@@ -26,6 +29,12 @@ export default [
       ...tseslint.configs.recommended.rules,
       "@typescript-eslint/no-unused-expressions": "off",
       "@next/next/no-html-link-for-pages": "off",
+    },
+  },
+  {
+    files: ["test/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 ];

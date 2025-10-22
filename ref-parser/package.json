@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:bibles": "tsx scripts/build-bibles.ts"
   },
   "dependencies": {
     "bible-passage-reference-parser": "3.1.0",
@@ -27,6 +28,7 @@
     "@typescript-eslint/parser": "8.14.0",
     "eslint": "9.15.0",
     "globals": "15.14.0",
+    "tsx": "4.15.7",
     "typescript": "5.5.4",
     "vitest": "2.1.2"
   }

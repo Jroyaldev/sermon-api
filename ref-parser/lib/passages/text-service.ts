@@ -136,7 +136,19 @@ const BOOK_ORDER = new Map<string, number>(
   BOOK_OSIS_BY_NUMBER.map((osis, index) => [osis, index]),
 );
 
+const BOOK_OSIS_CANONICAL = (() => {
+  const map = new Map<string, string>();
+  for (const osis of BOOK_OSIS_BY_NUMBER) {
+    if (!osis) continue;
+    const upper = osis.toUpperCase();
+    map.set(upper, osis);
+    map.set(upper.replace(/\./g, ""), osis);
+  }
+  return map;
+})();
+
 const DATA_DIRECTORY = path.join(process.cwd(), "data", "bibles");
+const COMPILED_DATA_DIRECTORY = path.join(process.cwd(), "data", "bibles-compiled");
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -193,20 +205,21 @@ async function loadBible(translation: TranslationConfig): Promise<BibleData | nu
   const promise: Promise<BibleData | null> = (async () => {
     const start = performance.now();
     try {
-      const parsed = await parseBibleFromXml(translation);
-      if (!parsed) {
-        console.warn("Parsed bible had no data", { translation: translation.id });
+      const { bible, source } = await resolveBibleData(translation);
+      if (!bible) {
+        console.warn("Loaded bible had no data", { translation: translation.id, source });
         return null;
       }
 
-      bibleCache.set(translation.id, parsed);
+      bibleCache.set(translation.id, bible);
       const duration = Math.round(performance.now() - start);
-      console.info("Parsed bible translation", {
+      console.info("Loaded bible translation", {
         translation: translation.id,
         durationMs: duration,
-        books: parsed.books.size,
+        books: bible.books.size,
+        source,
       });
-      return parsed;
+      return bible;
     } catch (error) {
       console.error("Failed to load bible", { translation: translation.id, error });
       return null;
@@ -219,45 +232,76 @@ async function loadBible(translation: TranslationConfig): Promise<BibleData | nu
   return promise;
 }
 
-async function parseBibleFromXml(translation: TranslationConfig): Promise<BibleData | null> {
+export async function parseBibleFromXml(translation: TranslationConfig): Promise<BibleData | null> {
   const filePath = path.join(DATA_DIRECTORY, translation.file);
 
   try {
     const xml = await readFile(filePath, "utf8");
-    const parsed = parser.parse(xml) as {
-      XMLBIBLE?: { BIBLEBOOK?: unknown };
-    };
+    const parsed = parser.parse(xml) as Record<string, unknown>;
 
-    const booksNode = parsed.XMLBIBLE?.BIBLEBOOK;
+    const containers: Record<string, unknown>[] = [];
+    const candidateContainers = [
+      parsed.XMLBIBLE,
+      parsed.XMLBible,
+      parsed.xmlbible,
+      parsed.BIBLE,
+      parsed.Bible,
+      parsed.bible,
+    ];
+
+    for (const candidate of candidateContainers) {
+      if (candidate && typeof candidate === "object") {
+        containers.push(candidate as Record<string, unknown>);
+      }
+    }
+
+    if (containers.length === 0) {
+      containers.push(parsed);
+    }
+
+    let booksNode: unknown;
+    for (const container of containers) {
+      booksNode = pickProperty(container, ["BIBLEBOOK", "BibleBook", "biblebook", "BOOK", "Book", "book", "b"]);
+      if (booksNode !== undefined) {
+        break;
+      }
+    }
+
     const booksArray = ensureArray(booksNode);
     const books = new Map<string, BookData>();
+    let sequentialBookIndex = 0;
 
     for (const bookNode of booksArray) {
       if (!bookNode || typeof bookNode !== "object") continue;
       const record = bookNode as Record<string, unknown>;
-      const bnumber = toInteger(record.bnumber);
-      const bookOsis = bnumber ? BOOK_OSIS_BY_NUMBER[bnumber] : undefined;
-      const bookName = typeof record.bname === "string" ? record.bname : bookOsis;
-      if (!bookOsis || !bookName) continue;
+      const fallbackIndex = sequentialBookIndex + 1;
+      const bnumber = toInteger(pickProperty(record, ["bnumber", "bnum", "number"]));
+      const bookNumber = bnumber ?? fallbackIndex;
+      const bookOsis = resolveBookOsis(record, bookNumber);
+      const bookName = pickString(record, ["bname", "name", "n", "title"]) ?? bookOsis;
+      if (!bookOsis || !bookName) {
+        sequentialBookIndex = fallbackIndex;
+        continue;
+      }
 
-      const chapterNodes = ensureArray(record.CHAPTER);
+      const chapterNodes = ensureArray(pickProperty(record, ["CHAPTER", "Chapter", "chapter", "c"]));
       const chapters = new Map<number, ChapterData>();
       const chapterNumbers: number[] = [];
 
       for (const chapterNode of chapterNodes) {
         if (!chapterNode || typeof chapterNode !== "object") continue;
         const chapterRecord = chapterNode as Record<string, unknown>;
-        const cnumber = toInteger(chapterRecord.cnumber);
+        const cnumber = toInteger(pickProperty(chapterRecord, ["cnumber", "cnum", "number", "n"]));
         if (!Number.isInteger(cnumber)) continue;
 
-        const verseNodes = ensureArray(chapterRecord.VERS);
+        const verseNodes = ensureArray(pickProperty(chapterRecord, ["VERS", "Vers", "vers", "VERSE", "verse", "v"]));
         const verses = new Map<number, VerseData>();
         const verseNumbers: number[] = [];
 
         for (const verseNode of verseNodes) {
           if (!verseNode || (typeof verseNode !== "string" && typeof verseNode !== "object")) continue;
-          const verseRecord = typeof verseNode === "object" ? verseNode as Record<string, unknown> : {};
-          const vnumber = toInteger(verseRecord.vnumber);
+          const verseRecord = typeof verseNode === "object" ? verseNode as Record<string, unknown> : undefined;
+          const vnumber = verseRecord ? toInteger(pickProperty(verseRecord, ["vnumber", "vnum", "number", "n"])) : undefined;
           if (!Number.isInteger(vnumber)) continue;
 
           const normalizedText = extractVerseText(verseNode);
@@ -292,6 +336,7 @@ async function parseBibleFromXml(translation: TranslationConfig): Promise<BibleD
           order: BOOK_ORDER.get(bookOsis) ?? Number.MAX_SAFE_INTEGER,
         });
       }
+      sequentialBookIndex = fallbackIndex;
     }
 
     if (books.size === 0) {
@@ -304,6 +349,36 @@ async function parseBibleFromXml(translation: TranslationConfig): Promise<BibleD
     } satisfies BibleData;
   } catch (error) {
     console.error("Failed to parse bible xml", { translation: translation.id, error });
+    return null;
+  }
+}
+
+async function resolveBibleData(translation: TranslationConfig): Promise<{ bible: BibleData | null; source: "json" | "xml" }> {
+  const compiled = await loadCompiledBible(translation);
+  if (compiled) {
+    return { bible: compiled, source: "json" };
+  }
+
+  const parsed = await parseBibleFromXml(translation);
+  return { bible: parsed, source: "xml" };
+}
+
+async function loadCompiledBible(translation: TranslationConfig): Promise<BibleData | null> {
+  const filePath = path.join(COMPILED_DATA_DIRECTORY, `${translation.id}.json`);
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const payload = JSON.parse(raw) as SerializedBibleData;
+    const bible = deserializeBibleData(payload);
+    if (!bible || bible.books.size === 0) {
+      console.warn("Compiled bible had no data", { translation: translation.id });
+      return null;
+    }
+    return bible;
+  } catch (error) {
+    if (typeof error === "object" && error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      return null;
+    }
+    console.error("Failed to load compiled bible", { translation: translation.id, error });
     return null;
   }
 }
@@ -620,7 +695,7 @@ function extractVerseText(node: unknown): string {
   }
 
   for (const [key, value] of Object.entries(record)) {
-    if (key === "#text" || key === "vnumber") continue;
+    if (key === "#text" || key === "vnumber" || key === "n") continue;
     if (Array.isArray(value)) {
       for (const item of value) {
         const text = extractVerseText(item);
@@ -646,4 +721,168 @@ function toInteger(value: unknown): number | undefined {
   return undefined;
 }
 
-export type { FetchBatchPassageArgs, FetchPassageArgs, PassageText };
+interface SerializedVerseData {
+  reference: string;
+  text: string;
+}
+
+interface SerializedChapterData {
+  verses: Record<string, SerializedVerseData>;
+  verseNumbers: number[];
+}
+
+interface SerializedBookData {
+  name: string;
+  osis: string;
+  order: number;
+  chapterNumbers: number[];
+  chapters: Record<string, SerializedChapterData>;
+}
+
+interface SerializedBibleData {
+  translation: TranslationConfig;
+  books: Record<string, SerializedBookData>;
+}
+
+function serializeBibleData(bible: BibleData): SerializedBibleData {
+  const books: Record<string, SerializedBookData> = {};
+
+  for (const [bookOsis, book] of bible.books) {
+    const chapters: Record<string, SerializedChapterData> = {};
+
+    for (const [chapterNumber, chapter] of book.chapters) {
+      const verses: Record<string, SerializedVerseData> = {};
+      for (const [verseNumber, verse] of chapter.verses) {
+        verses[String(verseNumber)] = {
+          reference: verse.reference,
+          text: verse.text,
+        } satisfies SerializedVerseData;
+      }
+
+      chapters[String(chapterNumber)] = {
+        verses,
+        verseNumbers: [...chapter.verseNumbers],
+      } satisfies SerializedChapterData;
+    }
+
+    books[bookOsis] = {
+      name: book.name,
+      osis: book.osis,
+      order: book.order,
+      chapterNumbers: [...book.chapterNumbers],
+      chapters,
+    } satisfies SerializedBookData;
+  }
+
+  return {
+    translation: bible.translation,
+    books,
+  } satisfies SerializedBibleData;
+}
+
+function deserializeBibleData(payload: SerializedBibleData): BibleData | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const books = new Map<string, BookData>();
+  for (const [bookOsis, book] of Object.entries(payload.books ?? {})) {
+    if (!book) continue;
+    const chapters = new Map<number, ChapterData>();
+
+    for (const [chapterKey, chapter] of Object.entries(book.chapters ?? {})) {
+      if (!chapter) continue;
+      const chapterNumber = Number.parseInt(chapterKey, 10);
+      if (!Number.isInteger(chapterNumber)) continue;
+
+      const verses = new Map<number, VerseData>();
+      for (const [verseKey, verse] of Object.entries(chapter.verses ?? {})) {
+        if (!verse) continue;
+        const verseNumber = Number.parseInt(verseKey, 10);
+        if (!Number.isInteger(verseNumber)) continue;
+        verses.set(verseNumber, {
+          reference: verse.reference,
+          text: verse.text,
+        });
+      }
+
+      const verseNumbers = Array.isArray(chapter.verseNumbers) && chapter.verseNumbers.length > 0
+        ? [...chapter.verseNumbers]
+        : Array.from(verses.keys()).sort((a, b) => a - b);
+
+      if (verseNumbers.length === 0) continue;
+
+      chapters.set(chapterNumber, {
+        verses,
+        verseNumbers,
+      });
+    }
+
+    const chapterNumbers = Array.isArray(book.chapterNumbers) && book.chapterNumbers.length > 0
+      ? [...book.chapterNumbers]
+      : Array.from(chapters.keys()).sort((a, b) => a - b);
+
+    if (chapterNumbers.length === 0) continue;
+
+    books.set(bookOsis, {
+      name: book.name ?? bookOsis,
+      osis: book.osis ?? bookOsis,
+      order: typeof book.order === "number" ? book.order : BOOK_ORDER.get(bookOsis) ?? Number.MAX_SAFE_INTEGER,
+      chapterNumbers,
+      chapters,
+    });
+  }
+
+  if (books.size === 0) {
+    return null;
+  }
+
+  return {
+    translation: payload.translation,
+    books,
+  } satisfies BibleData;
+}
+
+function pickProperty<T>(record: Record<string, unknown>, keys: string[]): T | undefined {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    const value = record[key];
+    if (value !== undefined) {
+      return value as T;
+    }
+  }
+  return undefined;
+}
+
+function pickString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  const candidate = pickProperty<unknown>(record, keys);
+  return typeof candidate === "string" ? candidate.trim() : undefined;
+}
+
+function resolveBookOsis(record: Record<string, unknown>, fallbackNumber: number): string | undefined {
+  const direct = pickString(record, ["osis", "OSIS", "osisid", "OSISID", "id", "ID"]);
+  if (direct) {
+    const normalized = direct.replace(/\s+/g, "");
+    const upper = normalized.toUpperCase();
+    const canonical = BOOK_OSIS_CANONICAL.get(upper) ?? BOOK_OSIS_CANONICAL.get(upper.replace(/\./g, ""));
+    if (canonical) {
+      return canonical;
+    }
+  }
+
+  const fallback = BOOK_OSIS_BY_NUMBER[fallbackNumber];
+  if (fallback) {
+    return fallback;
+  }
+
+  const inferredByName = pickString(record, ["bname", "name", "n", "title"]);
+  if (!inferredByName) {
+    return undefined;
+  }
+
+  const upperName = inferredByName.replace(/\s+/g, "").toUpperCase();
+  return BOOK_OSIS_CANONICAL.get(upperName);
+}
+
+export type { FetchBatchPassageArgs, FetchPassageArgs, PassageText, SerializedBibleData };
+export { serializeBibleData, deserializeBibleData };
