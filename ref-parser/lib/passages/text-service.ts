@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { XMLParser } from "fast-xml-parser";
 
@@ -8,7 +9,7 @@ import {
   getDefaultTranslation,
   resolveTranslation,
   type TranslationConfig,
-} from "@/lib/passages/translation-metadata";
+} from "./translation-metadata";
 
 interface FetchPassageArgs {
   osis: string;
@@ -147,8 +148,12 @@ const BOOK_OSIS_CANONICAL = (() => {
   return map;
 })();
 
-const DATA_DIRECTORY = path.join(process.cwd(), "data", "bibles");
-const COMPILED_DATA_DIRECTORY = path.join(process.cwd(), "data", "bibles-compiled");
+// Resolve data directories relative to this file, not process.cwd()
+// This ensures paths work correctly when imported from other packages
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIRECTORY = path.resolve(__dirname, "../../data/bibles");
+const COMPILED_DATA_DIRECTORY = path.resolve(__dirname, "../../data/bibles-compiled");
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -292,7 +297,7 @@ export async function parseBibleFromXml(translation: TranslationConfig): Promise
         if (!chapterNode || typeof chapterNode !== "object") continue;
         const chapterRecord = chapterNode as Record<string, unknown>;
         const cnumber = toInteger(pickProperty(chapterRecord, ["cnumber", "cnum", "number", "n"]));
-        if (!Number.isInteger(cnumber)) continue;
+        if (!Number.isInteger(cnumber) || cnumber === undefined) continue;
 
         const verseNodes = ensureArray(pickProperty(chapterRecord, ["VERS", "Vers", "vers", "VERSE", "verse", "v"]));
         const verses = new Map<number, VerseData>();
@@ -302,26 +307,26 @@ export async function parseBibleFromXml(translation: TranslationConfig): Promise
           if (!verseNode || (typeof verseNode !== "string" && typeof verseNode !== "object")) continue;
           const verseRecord = typeof verseNode === "object" ? verseNode as Record<string, unknown> : undefined;
           const vnumber = verseRecord ? toInteger(pickProperty(verseRecord, ["vnumber", "vnum", "number", "n"])) : undefined;
-          if (!Number.isInteger(vnumber)) continue;
+          if (!Number.isInteger(vnumber) || vnumber === undefined) continue;
 
           const normalizedText = extractVerseText(verseNode);
-          verses.set(vnumber, {
-            reference: `${bookName} ${cnumber}:${vnumber}`,
+          verses.set(vnumber as number, {
+            reference: `${bookName} ${cnumber as number}:${vnumber}`,
             text: normalizedText,
           });
-          if (!verseNumbers.includes(vnumber)) {
-            verseNumbers.push(vnumber);
+          if (!verseNumbers.includes(vnumber as number)) {
+            verseNumbers.push(vnumber as number);
           }
         }
 
         verseNumbers.sort((a, b) => a - b);
 
         if (verseNumbers.length > 0) {
-          chapters.set(cnumber, {
+          chapters.set(cnumber as number, {
             verses,
             verseNumbers,
           });
-          chapterNumbers.push(cnumber);
+          chapterNumbers.push(cnumber as number);
         }
       }
 

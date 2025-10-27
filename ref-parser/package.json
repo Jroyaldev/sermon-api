@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "exports": {
+    "./lib": "./lib/passages/index.ts",
+    "./lib/client": "./lib/passages/client.ts",
+    "./lib/server": "./lib/passages/server.ts"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
