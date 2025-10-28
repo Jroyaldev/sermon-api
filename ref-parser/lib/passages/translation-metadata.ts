@@ -46,3 +46,7 @@ export function listTranslations(): TranslationSummary[] {
     isDefault: translation.isDefault ?? false,
   }));
 }
+
+export function listTranslationConfigs(): TranslationConfig[] {
+  return [...TRANSLATION_LIST];
+}

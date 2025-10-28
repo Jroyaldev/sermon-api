@@ -4,17 +4,33 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    "./lib": "./lib/passages/index.ts",
-    "./lib/client": "./lib/passages/client.ts",
-    "./lib/server": "./lib/passages/server.ts"
+    "./lib": {
+      "types": "./dist/passages/index.d.ts",
+      "import": "./dist/passages/index.js"
+    },
+    "./lib/client": {
+      "types": "./dist/passages/client.d.ts",
+      "import": "./dist/passages/client.js"
+    },
+    "./lib/server": {
+      "types": "./dist/passages/server.d.ts",
+      "import": "./dist/passages/server.js"
+    }
   },
+  "files": [
+    "dist",
+    "data/bibles-compiled",
+    "data/footnotes"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:lib": "tsc -p tsconfig.build.json",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "build:bibles": "tsx scripts/build-bibles.ts"
+    "build:bibles": "tsx scripts/build-bibles.ts",
+    "prepublishOnly": "npm run build:lib"
   },
   "dependencies": {
     "bible-passage-reference-parser": "3.1.0",

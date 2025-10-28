@@ -4,7 +4,8 @@
 .env
 .env.local
 .env.*
-dist/
+# Keep ref-parser/dist for package distribution
+/ref-parser/.next/
 out/
 coverage/
 npm-debug.log*

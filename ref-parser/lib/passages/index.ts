@@ -5,11 +5,18 @@ export { searchPassages } from "./search";
 export { listLanguages } from "./translations";
 
 // Server-only exports (requires file I/O, use from server actions only)
-export { fetchPassageText, fetchBatchPassageText } from "./text-service";
+export {
+  fetchPassageText,
+  fetchBatchPassageText,
+  parseBibleFromXml,
+  serializeBibleData,
+} from "./text-service";
 export {
   getDefaultTranslation,
   resolveTranslation,
   listTranslations,
+  listTranslationConfigs,
+  TRANSLATIONS,
   type TranslationConfig,
   type TranslationSummary,
 } from "./translation-metadata";
@@ -21,6 +28,11 @@ export type {
   ParsedReference,
   ParseResult,
 } from "./types";
+
+// Imports for use within this file
+import { listLanguages } from "./translations";
+import { parsePassages } from "./parse";
+import type { ParsedReference } from "./types";
 
 // Client-safe suggestion helper (mirrors the API endpoint logic)
 export interface SuggestionResult {
@@ -36,9 +48,9 @@ export async function suggestReferences(
   const languages = language ? [language] : listLanguages();
 
   const suggestions = await Promise.all(
-    languages.map(async (lang) => {
+    languages.map(async (lang: string) => {
       const parsed = await parsePassages({ text: query, language: lang });
-      return parsed.references.map((ref) => ({
+      return parsed.references.map((ref: ParsedReference) => ({
         osis: ref.osis,
         language: lang,
         label: ref.osis,
