@@ -1,3 +1,6 @@
+import { parsePassages } from "./parse";
+import { listLanguages } from "./translations";
+
 // Client-safe exports (no file I/O, can run in browser)
 export { parsePassages, parsePassagesWithContext } from "./parse";
 export { normalizeReference } from "./normalize";
